@@ -15,7 +15,7 @@ pub fn parse(gpa: Allocator, io: Io, path: []const u8) !@This() {
         tensor_infos[i] = try TensorInfo.parse(gpa, &reader.interface);
     }
 
-    const alignment: ?u32 = for (header.metadata) |kv| {
+    const alignment: u32 = for (header.metadata) |kv| {
         if (mem.eql(u8, kv.key, "general.alignment")) {
             switch (kv.value) {
                 .uint32 => |v| {
@@ -24,16 +24,14 @@ pub fn parse(gpa: Allocator, io: Io, path: []const u8) !@This() {
                 else => return error.InvalidAlignment,
             }
         }
-    } else null;
+    } else 32;
 
-    if (alignment) |algnmnt| {
-        const pos = @sizeOf(Header) + @sizeOf([]TensorInfo);
-        const align_off = pos + (algnmnt - (pos % algnmnt)) % algnmnt;
+    const pos = @sizeOf(Header) + @sizeOf([]TensorInfo);
+    const align_off = pos + (alignment - (pos % alignment)) % alignment;
 
-        const pad = align_off - pos;
-        if (pad > 0) {
-            try reader.seekBy(pad);
-        }
+    const pad = align_off - pos;
+    if (pad > 0) {
+        try reader.seekBy(pad);
     }
 
     const remaining = try reader.getSize() - reader.logicalPos();

@@ -7,7 +7,6 @@ pub fn main(init: std.process.Init) !void {
     defer file.deinit(init.gpa);
 
     std.debug.print("Header ========\n", .{});
-
     for (file.header.metadata) |kv| {
         switch (kv.value) {
             .array => |*arr| {
