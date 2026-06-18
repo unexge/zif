@@ -1,8 +1,18 @@
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: Init) !void {
     var args = init.minimal.args.iterate();
     _ = args.next() orelse return error.MissingProgname;
-    const filename = args.next() orelse return error.MissingFilename;
 
+    const subcommand = args.next() orelse return error.MissingSubcommand;
+
+    if (mem.eql(u8, subcommand, "dump")) {
+        const filename = args.next() orelse return error.MissingFilename;
+        try dump(&init, filename);
+    } else {
+        return error.UnknownSubcommand;
+    }
+}
+
+fn dump(init: *const Init, filename: []const u8) !void {
     var file = try Gguf.parse(init.gpa, init.io, filename);
     defer file.deinit(init.gpa);
 
@@ -34,6 +44,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 const std = @import("std");
+const mem = std.mem;
 const Io = std.Io;
+const Init = std.process.Init;
 const zif = @import("zif");
 const Gguf = zif.Gguf;

@@ -1,8 +1,8 @@
 # zif
 
-## Parse GGUF file
+## Dump GGUF file metadata
 ```shell
-$ zig build run -Doptimize=ReleaseSafe -- /path/to/Qwen3-0.6B-Q8_0.gguf
+$ zig build run -Doptimize=ReleaseSafe -- dump /path/to/Qwen3-0.6B-Q8_0.gguf
 Header ========
 general.architecture => qwen3
 general.type => model
