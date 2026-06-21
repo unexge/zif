@@ -17,19 +17,36 @@ fn dump(init: *const Init, filename: []const u8) !void {
     defer file.deinit(init.gpa);
 
     std.debug.print("Header ========\n", .{});
-    for (file.header.metadata) |kv| {
-        switch (kv.value) {
+
+    var keys = try init.gpa.alloc([]const u8, file.header.metadata.count());
+    defer init.gpa.free(keys);
+
+    var key_iter = file.header.metadata.keyIterator();
+    var i: usize = 0;
+    while (key_iter.next()) |key| {
+        keys[i] = key.*;
+        i += 1;
+    }
+    mem.sortUnstable([]const u8, keys, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    }.lessThan);
+
+    for (keys) |key| {
+        const val = file.header.metadata.get(key).?;
+        switch (val) {
             .array => |*arr| {
-                std.debug.print("{s} => array with {d} elements\n", .{ kv.key, arr.len });
+                std.debug.print("{s} => array with {d} elements\n", .{ key, arr.len });
                 for (0..5) |j| {
                     std.debug.print("\t{any}\n", .{arr.*[j]});
                 }
             },
             .string => |*str| {
-                std.debug.print("{s} => {s}\n", .{ kv.key, str.* });
+                std.debug.print("{s} => {s}\n", .{ key, str.* });
             },
             else => {
-                std.debug.print("{s} => {any}\n", .{ kv.key, kv.value });
+                std.debug.print("{s} => {any}\n", .{ key, val });
             },
         }
     }
@@ -45,6 +62,7 @@ fn dump(init: *const Init, filename: []const u8) !void {
 
 const std = @import("std");
 const mem = std.mem;
+const sort = std.sort;
 const Io = std.Io;
 const Init = std.process.Init;
 const zif = @import("zif");

@@ -15,14 +15,12 @@ pub fn parse(gpa: Allocator, io: Io, path: []const u8) !@This() {
         tensor_infos[i] = try TensorInfo.parse(gpa, &reader.interface);
     }
 
-    const alignment: u32 = for (header.metadata) |kv| {
-        if (mem.eql(u8, kv.key, "general.alignment")) {
-            switch (kv.value) {
-                .uint32 => |v| {
-                    break v;
-                },
-                else => return error.InvalidAlignment,
-            }
+    const alignment: u32 = if (header.metadata.get("general.alignment")) |value| blk: {
+        switch (value) {
+            .uint32 => |v| {
+                break :blk v;
+            },
+            else => return error.InvalidAlignment,
         }
     } else 32;
 
@@ -55,92 +53,71 @@ pub const Header = struct {
 
     version: u32,
     tensor_count: u64,
-    metadata: []KeyValue,
+    metadata: StringHashMap(Value),
 
-    const KeyValue = struct {
-        key: []const u8,
-        value: Value,
+    pub const Value = union(enum) {
+        uint8: u8,
+        int8: i8,
+        uint16: u16,
+        int16: i16,
+        uint32: u32,
+        int32: i32,
+        float32: f32,
+        uint64: u64,
+        int64: i64,
+        float64: f64,
+        boolean: bool,
+        string: []const u8,
+        array: []Value,
 
-        const Value = union(enum) {
-            uint8: u8,
-            int8: i8,
-            uint16: u16,
-            int16: i16,
-            uint32: u32,
-            int32: i32,
-            float32: f32,
-            uint64: u64,
-            int64: i64,
-            float64: f64,
-            boolean: bool,
-            string: []const u8,
-            array: []Value,
-
-            fn parse(gpa: Allocator, reader: *Io.Reader, vtype: u32) !@This() {
-                return switch (vtype) {
-                    0 => .{ .uint8 = try reader.takeByte() },
-                    1 => .{ .int8 = try reader.takeInt(i8, .little) },
-                    2 => .{ .uint16 = try reader.takeInt(u16, .little) },
-                    3 => .{ .int16 = try reader.takeInt(i16, .little) },
-                    4 => .{ .uint32 = try reader.takeInt(u32, .little) },
-                    5 => .{ .int32 = try reader.takeInt(i32, .little) },
-                    6 => .{ .float32 = @bitCast(try reader.takeInt(u32, .little)) },
-                    7 => blk: {
-                        const val = try reader.takeByte();
-                        const b = switch (val) {
-                            0 => false,
-                            1 => true,
-                            else => return error.InvalidBoolean,
-                        };
-                        break :blk .{ .boolean = b };
-                    },
-                    8 => .{ .string = try parseString(gpa, reader) },
-                    9 => blk: {
-                        const etype = try reader.takeInt(u32, .little);
-                        const len = try reader.takeInt(u64, .little);
-                        const values = try gpa.alloc(Value, len);
-                        for (0..len) |i| {
-                            values[i] = try Value.parse(gpa, reader, etype);
-                        }
-                        break :blk .{ .array = values };
-                    },
-                    10 => .{ .uint64 = try reader.takeInt(u64, .little) },
-                    11 => .{ .int64 = try reader.takeInt(i64, .little) },
-                    12 => .{ .float64 = @bitCast(try reader.takeInt(u64, .little)) },
-                    else => return error.UnknownValueType,
-                };
-            }
-
-            fn deinit(self: *@This(), gpa: Allocator) void {
-                switch (self.*) {
-                    .string => |*str| {
-                        gpa.free(str.*);
-                    },
-                    .array => |*arr| {
-                        for (arr.*) |*val| {
-                            val.deinit(gpa);
-                        }
-                        gpa.free(arr.*);
-                    },
-                    else => {},
-                }
-                self.* = undefined;
-            }
-        };
-
-        fn parse(gpa: Allocator, reader: *Io.Reader) !@This() {
-            const key = try parseString(gpa, reader);
-            const vtype = try reader.takeInt(u32, .little);
-            const value = try Value.parse(gpa, reader, vtype);
-            return .{
-                .key = key,
-                .value = value,
+        fn parse(gpa: Allocator, reader: *Io.Reader, vtype: u32) !@This() {
+            return switch (vtype) {
+                0 => .{ .uint8 = try reader.takeByte() },
+                1 => .{ .int8 = try reader.takeInt(i8, .little) },
+                2 => .{ .uint16 = try reader.takeInt(u16, .little) },
+                3 => .{ .int16 = try reader.takeInt(i16, .little) },
+                4 => .{ .uint32 = try reader.takeInt(u32, .little) },
+                5 => .{ .int32 = try reader.takeInt(i32, .little) },
+                6 => .{ .float32 = @bitCast(try reader.takeInt(u32, .little)) },
+                7 => blk: {
+                    const val = try reader.takeByte();
+                    const b = switch (val) {
+                        0 => false,
+                        1 => true,
+                        else => return error.InvalidBoolean,
+                    };
+                    break :blk .{ .boolean = b };
+                },
+                8 => .{ .string = try parseString(gpa, reader) },
+                9 => blk: {
+                    const etype = try reader.takeInt(u32, .little);
+                    const len = try reader.takeInt(u64, .little);
+                    const values = try gpa.alloc(Value, len);
+                    for (0..len) |i| {
+                        values[i] = try Value.parse(gpa, reader, etype);
+                    }
+                    break :blk .{ .array = values };
+                },
+                10 => .{ .uint64 = try reader.takeInt(u64, .little) },
+                11 => .{ .int64 = try reader.takeInt(i64, .little) },
+                12 => .{ .float64 = @bitCast(try reader.takeInt(u64, .little)) },
+                else => return error.UnknownValueType,
             };
         }
 
         fn deinit(self: *@This(), gpa: Allocator) void {
-            gpa.free(self.key);
-            self.value.deinit(gpa);
+            switch (self.*) {
+                .string => |*str| {
+                    gpa.free(str.*);
+                },
+                .array => |*arr| {
+                    for (arr.*) |*val| {
+                        val.deinit(gpa);
+                    }
+                    gpa.free(arr.*);
+                },
+                else => {},
+            }
             self.* = undefined;
         }
     };
@@ -159,9 +136,13 @@ pub const Header = struct {
         }
 
         const metadata_kv_count: u64 = @bitCast(header[16..24].*);
-        const metadata = try gpa.alloc(KeyValue, metadata_kv_count);
-        for (0..metadata_kv_count) |i| {
-            metadata[i] = try KeyValue.parse(gpa, reader);
+        var metadata: StringHashMap(Value) = .init(gpa);
+        try metadata.ensureTotalCapacity(@intCast(metadata_kv_count));
+        for (0..metadata_kv_count) |_| {
+            const key = try parseString(gpa, reader);
+            const vtype = try reader.takeInt(u32, .little);
+            const value = try Value.parse(gpa, reader, vtype);
+            metadata.putAssumeCapacity(key, value);
         }
 
         return .{
@@ -171,11 +152,44 @@ pub const Header = struct {
         };
     }
 
-    fn deinit(self: *@This(), gpa: Allocator) void {
-        for (self.metadata) |*kv| {
-            kv.deinit(gpa);
+    pub fn getMetadataKey(self: *@This(), comptime T: type, key: []const u8) !?T {
+        const val = self.metadata.get(key) orelse return null;
+        switch (T) {
+            u32 => {
+                switch (val) {
+                    .uint32 => |*num| {
+                        return num.*;
+                    },
+                    else => return error.ExpectedUint32MetadataValue,
+                }
+            },
+            []const u8 => {
+                switch (val) {
+                    .string => |*str| {
+                        return str.*;
+                    },
+                    else => return error.ExpectedStringMetadataValue,
+                }
+            },
+            []Value => {
+                switch (val) {
+                    .array => |*arr| {
+                        return arr.*;
+                    },
+                    else => return error.ExpectedArrayMetadataValue,
+                }
+            },
+            else => @compileError("Unsupported type " + T),
         }
-        gpa.free(self.metadata);
+    }
+
+    fn deinit(self: *@This(), gpa: Allocator) void {
+        var iter = self.metadata.iterator();
+        while (iter.next()) |*entry| {
+            gpa.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(gpa);
+        }
+        self.metadata.deinit();
         self.* = undefined;
     }
 };
@@ -270,4 +284,5 @@ const std = @import("std");
 const mem = std.mem;
 const enums = std.enums;
 const Allocator = mem.Allocator;
+const StringHashMap = std.StringHashMap;
 const Io = std.Io;
