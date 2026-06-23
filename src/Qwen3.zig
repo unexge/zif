@@ -121,9 +121,9 @@ const BytePairEncoding = struct {
     // Find next token(s) from given input and return end of current token's position on input and list of tokens
     fn next(self: *@This(), gpa: Allocator, input: []const u8) !?struct { usize, []usize } {
         // Get first split based on RegEx pattern of Qwen2/GPT-2
-        const split_len = currSplitLen(input);
+        var split_len = currSplitLen(input);
         if (split_len == 0) return null;
-        const split = input[0..split_len];
+        var split = input[0..split_len];
 
         // This might be start of a control token, find until |>, and do a lookup
         if (mem.eql(u8, "<|", split)) {
@@ -135,9 +135,9 @@ const BytePairEncoding = struct {
                     break null;
                 }
 
-                if (mem.eql(u8, "|>", input[control_token_pos..(control_token_pos + len)])) {
+                if (mem.find(u8, input[control_token_pos..(control_token_pos + len)], "|>")) |pos| {
                     // Found end of possible control token
-                    break control_token_pos + len;
+                    break control_token_pos + pos + 2; // +2 for len of |>
                 }
 
                 // Continue looking
@@ -152,6 +152,12 @@ const BytePairEncoding = struct {
                     return .{ e, tokens };
                 }
             }
+        } else if (mem.find(u8, split, "<|")) |control_start| {
+            // Sometimes a split contains start of a control token midway,
+            // if that's the case shrink current split to not include it
+            // so it can be handled on the next cycle
+            split_len = control_start;
+            split = input[0..split_len];
         }
 
         // Do byte-encoding to turn some bytes into Utf8 points
