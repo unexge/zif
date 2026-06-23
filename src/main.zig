@@ -7,6 +7,9 @@ pub fn main(init: Init) !void {
     if (mem.eql(u8, subcommand, "dump")) {
         const filename = args.next() orelse return error.MissingFilename;
         try dump(&init, filename);
+    } else if (mem.eql(u8, subcommand, "run")) {
+        const filename = args.next() orelse return error.MissingFilename;
+        try run(&init, filename);
     } else {
         return error.UnknownSubcommand;
     }
@@ -60,6 +63,23 @@ fn dump(init: *const Init, filename: []const u8) !void {
     std.debug.print("{d} bytes\n", .{file.tensor_data.len});
 }
 
+fn run(init: *const Init, filename: []const u8) !void {
+    var file = try Gguf.parse(init.gpa, init.io, filename);
+    defer file.deinit(init.gpa);
+
+    var model = try Qwen3.init(init.gpa, &file);
+    defer model.deinit(init.gpa);
+
+    const input =
+        \\<|im_start|>user
+        \\What is the capital of France?<|im_end|>
+        \\<|im_start|>assistant
+    ;
+    const output = try model.forward(init.gpa, input);
+    std.debug.print("< {s}\n", .{input});
+    std.debug.print("> {s}\n", .{output});
+}
+
 const std = @import("std");
 const mem = std.mem;
 const sort = std.sort;
@@ -67,3 +87,4 @@ const Io = std.Io;
 const Init = std.process.Init;
 const zif = @import("zif");
 const Gguf = zif.Gguf;
+const Qwen3 = zif.Qwen3;
