@@ -2,6 +2,8 @@ header: Header,
 tensor_infos: []TensorInfo,
 tensor_data: []u8,
 
+// TODO: Mmap.
+
 pub fn parse(gpa: Allocator, io: Io, path: []const u8) !@This() {
     const file = try Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
@@ -24,12 +26,12 @@ pub fn parse(gpa: Allocator, io: Io, path: []const u8) !@This() {
         }
     } else 32;
 
-    const pos = @sizeOf(Header) + @sizeOf([]TensorInfo);
+    const pos = reader.logicalPos();
     const align_off = pos + (alignment - (pos % alignment)) % alignment;
 
     const pad = align_off - pos;
     if (pad > 0) {
-        try reader.seekBy(pad);
+        try reader.seekBy(@intCast(pad));
     }
 
     const remaining = try reader.getSize() - reader.logicalPos();
