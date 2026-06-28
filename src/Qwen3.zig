@@ -2,6 +2,8 @@ tokenizer: BytePairEncoding,
 
 pub fn init(gpa: Allocator, model: *Gguf) !@This() {
     const tokenizer: BytePairEncoding = try .init(gpa, model);
+    const embed = try Embedding.init(gpa, model);
+    _ = embed;
 
     return .{ .tokenizer = tokenizer };
 }
@@ -21,6 +23,82 @@ pub fn forward(self: *@This(), gpa: Allocator, input: []const u8) ![]const u8 {
     }
     return input;
 }
+
+const Embedding = struct {
+    fn init(gpa: Allocator, model: *Gguf) !@This() {
+        const info: Gguf.TensorInfo = for (model.tensor_infos) |ti| {
+            if (mem.eql(u8, ti.name, "token_embd.weight")) {
+                break ti;
+            }
+        } else return error.MissingEmbeddingWeights;
+
+        const dims = info.dimensions;
+        if (dims.len != 2) return error.InvalidEmbeddingWeightDimensions;
+        const hidden = dims[0];
+        const vocab = dims[1];
+
+        const quantized_shape = try gpa.alloc(usize, 2);
+        defer gpa.free(quantized_shape);
+        quantized_shape[0] = vocab;
+        quantized_shape[1] = hidden;
+        try Q8_0.quantizeShape(quantized_shape);
+
+        const size = quantized_shape[0] * quantized_shape[1];
+
+        var weights: Q8_0 = try .init(gpa, model.tensor_data[info.offset..(info.offset + size)], &[_]usize{ vocab, hidden });
+        defer weights.deinit(gpa);
+
+        std.debug.print("Loaded weights (shape={any}):\n\t{any}\n", .{ weights.tensor.shape, weights.tensor.buf[0..10] });
+
+        return .{};
+    }
+};
+
+const Q8_0 = struct {
+    const block_size: usize = 32;
+    const scale_type: type = f16;
+    const scale_bytes: usize = @sizeOf(scale_type);
+    const block_bytes: usize = block_size + scale_bytes;
+
+    buf: []f32,
+    tensor: Tensor(f32),
+
+    fn init(gpa: Allocator, buf: []u8, shape: []const usize) !@This() {
+        // TODO: Make it a tensor operation.
+        // const quantized: Tensor(u8) = try .init(gpa, buf, quantized_shape);
+
+        var dequantized = try gpa.alloc(f32, shape[0] * shape[1]);
+        var pos: usize = 0;
+        var block_buf: [block_size]f32 = undefined;
+
+        for (0..shape[0]) |i| {
+            const offset = block_bytes * i;
+            const values_offset = offset + scale_bytes;
+            const scale: scale_type = @bitCast(mem.readInt(u16, @ptrCast(buf[offset..values_offset]), .little));
+
+            for (0..block_size) |j| {
+                const v: i8 = @bitCast(buf[values_offset + j]);
+                block_buf[j] = @as(f32, @floatFromInt(v)) * scale;
+            }
+            @memcpy(dequantized[pos..(pos + block_size)], block_buf[0..]);
+            pos += block_size;
+        }
+
+        return .{ .buf = dequantized, .tensor = try .init(gpa, dequantized, shape) };
+    }
+
+    fn deinit(self: *@This(), gpa: Allocator) void {
+        self.tensor.deinit();
+        gpa.free(self.buf);
+        self.* = undefined;
+    }
+
+    fn quantizeShape(shape: []usize) !void {
+        const d = shape[shape.len - 1];
+        if (d % block_size != 0) return error.InvalidDimension;
+        shape[shape.len - 1] = d / block_size * block_bytes;
+    }
+};
 
 const BytePairEncoding = struct {
     // Holds concatenated pairs to their ranks
@@ -614,4 +692,5 @@ const StringHashMap = std.StringHashMap;
 const StaticStringMap = std.StaticStringMap;
 const ArrayList = std.ArrayList;
 const Gguf = @import("Gguf.zig");
+const Tensor = @import("Tensor.zig").Tensor;
 const zg = @import("zg");
